@@ -10,6 +10,8 @@ from plotly.subplots import make_subplots
 from simulation.market_simulator import MarketSimulator, MarketParams
 from topology import persistence_homology
 
+PRICE_EPS = 1e-12
+
 
 @dataclass(frozen=True)
 class ScenarioSpec:
@@ -81,40 +83,54 @@ def aggregate_daily(
 
 # Intraday manipulation transforms
 
-
 def pump_dump_intraday(
     prices: np.ndarray,
     volumes: np.ndarray,
     n_days: int,
     n_intraday: int,
     rng: np.random.Generator,
+    intensity: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Pump & dump:
+    - sustained positive drift during pump window
+    - sustained negative drift during dump window
+    - a few discrete crash shocks during dump
+    - volume ramps up during both windows
+    """
+    prices0 = np.asarray(prices, dtype=float)
+    vols0 = np.asarray(volumes, dtype=float)
+
     total = n_days * n_intraday
     start = (n_days // 3) * n_intraday
     end = (2 * n_days // 3) * n_intraday
     mid = (start + end) // 2
 
-    logp = np.log(prices)
+    logp0 = np.log(np.maximum(prices0, PRICE_EPS))
+    r0 = np.diff(logp0, prepend=logp0[0])
+    r = r0.copy()
 
-    # Pump and dump drift per step
-    pump_drift = 0.00002
-    dump_drift = -0.00003
+    # Calibrate drift to intraday scale; intensity scales the effect
+    pump_drift = intensity * 2.0e-5
+    dump_drift = intensity * -3.0e-5
 
-    # Add drift with noise
-    logp[start:mid] += pump_drift * np.arange(mid - start)
-    logp[mid:end] += dump_drift * np.arange(end - mid)
+    r[start:mid] += pump_drift
+    r[mid:end] += dump_drift
 
-    # Add a few crash impulses during dump
+    # Crash shocks during dump (discrete negative log-return impulses)
     crash_k = max(1, (end - mid) // 3000)
     crash_idx = rng.choice(np.arange(mid, end), size=crash_k, replace=False)
-    logp[crash_idx] += rng.normal(-0.03, 0.01, size=crash_k)
+    r[crash_idx] += rng.normal(loc=-0.03 * intensity, scale=0.01 * intensity, size=crash_k)
 
-    prices2 = np.exp(logp)
+    # Reconstruct prices
+    logp2 = np.cumsum(r) + logp0[0]
+    prices2 = np.exp(logp2)
 
-    ramp = np.ones(total)
-    ramp[start:mid] *= np.linspace(1.2, 3.0, mid - start)
-    ramp[mid:end] *= np.linspace(2.0, 4.0, end - mid)
-    volumes2 = np.clip(volumes * ramp, 1, None).astype(int)
+    # Volume ramps (smooth)
+    ramp = np.ones(total, dtype=float)
+    ramp[start:mid] *= np.linspace(1.2, 3.0, mid - start) ** intensity
+    ramp[mid:end] *= np.linspace(2.0, 4.0, end - mid) ** intensity
+    volumes2 = np.clip(vols0 * ramp, 1.0, None).astype(int)
 
     return prices2, volumes2
 
@@ -125,49 +141,62 @@ def spoofing_intraday(
     n_days: int,
     n_intraday: int,
     rng: np.random.Generator,
-    lambda_day: float = 2.0,   # spoof events per day
+    lambda_day: float = 2.0,     # expected spoof events per day
+    intensity: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Spoofing:
+    - Poisson arrivals of short-lived price impact
+    - impact is mean-reverting: push then snap back
+    - mostly affects intraday extremes; close often reverts
+    - volume spike is stochastic, not guaranteed
+    """
+    prices0 = np.asarray(prices, dtype=float)
+    vols0 = np.asarray(volumes, dtype=float)
 
     total = n_days * n_intraday
-    logp = np.log(prices)
-
-    # baseline returns
-    r0 = np.diff(logp, prepend=logp[0])
-
-    # event rate per step
-    lam_step = lambda_day / n_intraday
-    event_mask = rng.random(total) < lam_step
-
+    logp0 = np.log(np.maximum(prices0, PRICE_EPS))
+    r0 = np.diff(logp0, prepend=logp0[0])
     r = r0.copy()
 
-    for i in np.where(event_mask)[0]:
-        horizon = rng.integers(20, 80)  # 20–80 minutes
+    # Poisson arrivals in discrete time: Bernoulli per step with p = lambda_day / n_intraday
+    p = min(0.25, lambda_day / n_intraday)  # safety cap
+    event_idx = np.where(rng.random(total) < p)[0]
+
+    for i in event_idx:
+        horizon = int(rng.integers(20, 80))  # 20–80 steps
         if i + horizon >= total:
             continue
 
-        # scale impact by local volatility
-        local_vol = np.std(r0[max(0, i-200):i+1])
-        amp = rng.uniform(2, 5) * local_vol
-
-        # push then snap back
         half = horizon // 2
+
+        # Scale to local vol; add floor so it doesn't vanish in calm regimes
+        local = r0[max(0, i - 400): i + 1]
+        local_vol = float(np.std(local)) if len(local) > 10 else float(np.std(r0))
+        sigma_eff = max(local_vol, 5e-4)  # floor in log-return units
+
+        # A few sigmas of temporary impact
+        amp = intensity * rng.uniform(3.0, 8.0) * sigma_eff
+
         push = amp * np.exp(-np.linspace(0, 3, half))
         snap = -amp * np.exp(-np.linspace(0, 3, horizon - half))
 
-        sign = rng.choice([-1, 1])
-        r[i:i+half] += sign * push
-        r[i+half:i+horizon] += sign * snap
+        sign = rng.choice([-1.0, 1.0])
+        r[i:i + half] += sign * push
+        r[i + half:i + horizon] += sign * snap
 
-        # volume activity spike
-        act_len = rng.integers(10, horizon)
+        # Volume spike: shorter than horizon, probabilistic
         if rng.random() < 0.6:
-            mult = rng.uniform(1.5, 4.0)
-            volumes[i:i+act_len] = np.clip(
-                volumes[i:i+act_len] * mult, 1, None
-            ).astype(int)
+            act_len = int(rng.integers(10, min(horizon, 50)))
+            mult = rng.uniform(1.5, 4.0) ** intensity
+            vols0[i:i + act_len] = np.clip(vols0[i:i + act_len] * mult, 1.0, None)
 
-    logp2 = np.cumsum(r) + logp[0]
-    return np.exp(logp2), volumes
+    logp2 = np.cumsum(r) + logp0[0]
+    prices2 = np.exp(logp2)
+    volumes2 = vols0.astype(int)
+
+    return prices2, volumes2
+
 
 def layering_intraday(
     prices: np.ndarray,
@@ -175,22 +204,40 @@ def layering_intraday(
     n_days: int,
     n_intraday: int,
     rng: np.random.Generator,
+    intensity: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Layering:
+    - persistent oscillatory "pressure" on returns (not on price level)
+    - modeled as AR(1) state added to returns (creates autocorrelated micro-trend)
+    - increases activity (volume) when pressure magnitude is high
+    """
+    prices0 = np.asarray(prices, dtype=float)
+    vols0 = np.asarray(volumes, dtype=float)
+
     total = n_days * n_intraday
-    logp = np.log(prices)
+    logp0 = np.log(np.maximum(prices0, PRICE_EPS))
+    r0 = np.diff(logp0, prepend=logp0[0])
+    r = r0.copy()
 
-    # noisy oscillatory pressure via AR(1)
-    x = 0.0
+    # AR(1) pressure parameters
     phi = 0.97
-    sigma = 0.00025
+    sigma = intensity * 2.5e-4  # return-pressure scale
 
+    x = 0.0
     for t in range(1, total):
         x = phi * x + rng.normal(0.0, sigma)
-        logp[t] += x
-        volumes[t] = int(max(1, volumes[t] * (1.0 + 40.0 * abs(x))))
+        r[t] += x
 
-    return np.exp(logp), volumes
+        # Activity coupling (keep reasonable)
+        boost = 1.0 + (40.0 * intensity) * abs(x)
+        vols0[t] = max(1.0, vols0[t] * boost)
 
+    logp2 = np.cumsum(r) + logp0[0]
+    prices2 = np.exp(logp2)
+    volumes2 = vols0.astype(int)
+
+    return prices2, volumes2
 
 def run_scenario(
     spec: ScenarioSpec, n_days: int, n_intraday: int, rng: np.random.Generator
