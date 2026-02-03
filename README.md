@@ -1,11 +1,6 @@
 # MMSim: Market Manipulation Simulation in Python
 
-**Note: This project is currently in development**
-
-## Features
-
-- [ ] Market manipulation simulation
-- [ ] Predicting MM with persistence entropy
+**Note: This project is currently in development. More details to come next!**
 
 A Python based market manipulation simulation strongly inspired by [braintruffle's video](https://www.youtube.com/watch?v=-jF9gW2r_bk)
 
@@ -46,14 +41,6 @@ def main():
 
 The goal of TDA here is to transform time series data into a topological space where manipulation patterns become more apparent, then use persistence entropy to quantify these patterns for detection.
 
-```bash
-# Run application
-uv run python src/main.py
-
-# Run tests
-uv run python -m pytest
-```
-
 ## Topological Data Analysis
 
 This project uses topological data analysis (TDA) to identify market manipulation patterns. TDA helps us understand the "shape" of market data by:
@@ -67,15 +54,17 @@ By analyzing the topological structure of financial time series, we can spot ano
 
 ## What Are We Doing?
 
-We simulates how market manipulation happens and detects it using Topological Data Analysis (TDA).
+We simulates market evolution over time using a simple geometric brownian motion (GBM) model. Then, we apply the three different market manipulation of interest directly in the simulation.
 
 ## The Setup
 
-We start by creating synthetic stock market data. The prices move up and down following patterns similar to actual market behavior.
+We start by creating synthetic stock market data. The prices move up and down following patterns similar to actual market behavior (modeled via GBM).
 
 ## Two Types of Data
 
 ### Normal Market Data
+
+![image](figures/control_market.png)
 
 This is what regular trading looks like. Prices go up and down based on normal buying and selling. The volume (how many shares are traded) follows predictable patterns (usually higher at the start and end of the trading day).
 
@@ -84,8 +73,11 @@ This is what regular trading looks like. Prices go up and down based on normal b
 This is where someone is trying to trick the market. They might:
 
 - **Pump and Dump**: Artificially inflate prices to attract buyers, then sell everything
+![image](figures/pump_dump.png)
 - **Spoofing**: Place large fake orders to trick others, then cancel them
-- **Wash Trading**: Buy and sell to themselves to create fake volume
+![image](figures/spoofing.png)
+- **Layering**: Buy and sell to themselves to create fake volume
+![image](figures/layering.png)
 
 ## How To Detect Manipulation
 
@@ -93,7 +85,8 @@ This is where someone is trying to trick the market. They might:
 
 We take the price data and transform it into a higher-dimensional space. It's like taking a line graph and folding it into a higher dimensional space so we can see patterns that aren't visible in the normal 2D chart.
 
-### Step 2: Topological Analysis
+
+### Step 2: Topological Data Analysis
 
 Once we have this 3D point cloud, we look at its shape:
 
@@ -106,3 +99,9 @@ Once we have this 3D point cloud, we look at its shape:
 This measures how "complex" the topological features are. Manipulated markets tend to have different entropy signatures than normal markets. When entropy suddenly changes, it might indicate manipulation.
 
 Normal markets have a certain "natural" complexity. When someone manipulates the market, they introduce artificial patterns that change this complexity. TDA helps us detect these subtle changes that traditional statistical methods might miss.
+![image](figures/persistence_entropy_volatility.png)
+
+
+# Single realisation results
+
+![image](figures/single_real_report.png)
