@@ -16,7 +16,7 @@ def _get_embedder_time_series(max_embedding_dim: int = 10, max_time_delay: int =
     )
     return embedder
 
-def _fit_embedder(embedder: SingleTakensEmbedding, y: np.ndarray, verbose: bool=True) -> np.ndarray:
+def _fit_embedder(embedder: SingleTakensEmbedding, y: np.ndarray, verbose: bool=False) -> np.ndarray:
     """Fits a Takens embedder and displays optimal search parameters."""
     y_embedded = embedder.fit_transform(y)
 
@@ -57,7 +57,7 @@ def vietoris_rips_transform(data: list[float], symbol: str) -> np.ndarray:
         homology_dimensions=homology_dimensions, n_jobs=6
     )
 
-    persistence_diagram = persistence.fit_transform_plot(data)
+    persistence_diagram = persistence.fit_transform(data)
 
     return persistence_diagram
 

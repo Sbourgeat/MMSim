@@ -125,28 +125,49 @@ def spoofing_intraday(
     n_days: int,
     n_intraday: int,
     rng: np.random.Generator,
+    lambda_day: float = 2.0,   # spoof events per day
 ) -> tuple[np.ndarray, np.ndarray]:
+
     total = n_days * n_intraday
     logp = np.log(prices)
 
-    # short bursts that revert
-    n_bursts = max(5, total // 8000)
-    idx = rng.choice(np.arange(100, total - 200), size=n_bursts, replace=False)
+    # baseline returns
+    r0 = np.diff(logp, prepend=logp[0])
 
-    for i in idx:
-        horizon = 40
-        amp = abs(rng.normal(0.012, 0.004))
-        decay = np.exp(-np.linspace(0.0, 3.0, horizon))
-        sign = rng.choice([-1.0, 1.0])
-        logp[i : i + horizon] += sign * amp * decay
+    # event rate per step
+    lam_step = lambda_day / n_intraday
+    event_mask = rng.random(total) < lam_step
 
-        mult = rng.uniform(3.0, 8.0)
-        volumes[i : i + horizon] = np.clip(
-            volumes[i : i + horizon] * mult, 1, None
-        ).astype(int)
+    r = r0.copy()
 
-    return np.exp(logp), volumes
+    for i in np.where(event_mask)[0]:
+        horizon = rng.integers(20, 80)  # 20–80 minutes
+        if i + horizon >= total:
+            continue
 
+        # scale impact by local volatility
+        local_vol = np.std(r0[max(0, i-200):i+1])
+        amp = rng.uniform(2, 5) * local_vol
+
+        # push then snap back
+        half = horizon // 2
+        push = amp * np.exp(-np.linspace(0, 3, half))
+        snap = -amp * np.exp(-np.linspace(0, 3, horizon - half))
+
+        sign = rng.choice([-1, 1])
+        r[i:i+half] += sign * push
+        r[i+half:i+horizon] += sign * snap
+
+        # volume activity spike
+        act_len = rng.integers(10, horizon)
+        if rng.random() < 0.6:
+            mult = rng.uniform(1.5, 4.0)
+            volumes[i:i+act_len] = np.clip(
+                volumes[i:i+act_len] * mult, 1, None
+            ).astype(int)
+
+    logp2 = np.cumsum(r) + logp[0]
+    return np.exp(logp2), volumes
 
 def layering_intraday(
     prices: np.ndarray,
