@@ -7,6 +7,10 @@ from plotting.dynamic_plotter import (
 )
 from plotting.market_plots import MarketPlotter
 from plotting.tda_plots import TDAPlotter
+from plotting.interactive_plots import (
+    create_interactive_price_plot,
+    create_multi_scenario_interactive_plot,
+)
 
 __all__ = [
     "SimpleDynamicPlotter",
@@ -14,4 +18,6 @@ __all__ = [
     "SimpleTDAPlotter",
     "MarketPlotter",
     "TDAPlotter",
+    "create_interactive_price_plot",
+    "create_multi_scenario_interactive_plot",
 ]
