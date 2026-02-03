@@ -99,3 +99,9 @@ Once we have this 3D point cloud, we look at its shape:
 This measures how "complex" the topological features are. Manipulated markets tend to have different entropy signatures than normal markets. When entropy suddenly changes, it might indicate manipulation.
 
 Normal markets have a certain "natural" complexity. When someone manipulates the market, they introduce artificial patterns that change this complexity. TDA helps us detect these subtle changes that traditional statistical methods might miss.
+![image](figures/persistence_entropy_volatility.png)
+
+
+# Single realisation results
+
+![image](figures/single_real_report.png)
